@@ -1,0 +1,14 @@
+{
+  "name": "AI Variable Generator",
+  "id": "ai-variable-generator-001",
+  "api": "1.0.0",
+  "main": "dist/code.js",
+  "capabilities": [],
+  "enableProposedApi": false,
+  "editorType": ["figma"],
+  "ui": "dist/ui.html",
+  "networkAccess": {
+    "allowedDomains": ["https://api.anthropic.com"],
+    "reasoning": "Required to call Anthropic Claude API for AI color palette generation"
+  }
+}

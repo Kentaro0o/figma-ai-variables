@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Variable Generator</title>
+</head>
+<body>
+  <div class="container">
+
+    <!-- API Key -->
+    <div class="section">
+      <div class="section-header">Anthropic API Key</div>
+      <div class="section-body">
+        <div class="key-row">
+          <input type="password" id="api-key" placeholder="sk-ant-..." autocomplete="off" />
+          <button class="btn btn-secondary" id="save-key">保存</button>
+          <span id="key-status"></span>
+        </div>
+        <span style="font-size:10px;color:var(--text-muted)">
+          キーはFigmaのClientStorageに暗号化保存されます
+        </span>
+      </div>
+    </div>
+
+    <!-- Generate -->
+    <div class="section">
+      <div class="section-header">AIカラーパレット生成</div>
+      <div class="section-body">
+        <label for="theme">テーマ・ブランドの説明</label>
+        <input
+          type="text"
+          id="theme"
+          placeholder="例: モダンな医療アプリ、温かみのあるコーヒーブランド..."
+        />
+        <div class="btn-row">
+          <button class="btn btn-primary" id="generate">AIで生成</button>
+          <span id="generate-status"></span>
+        </div>
+        <div id="preview"></div>
+        <button class="btn btn-secondary" id="apply" disabled>
+          Figmaに変数として適用
+        </button>
+      </div>
+    </div>
+
+    <!-- Import -->
+    <div class="section">
+      <div class="section-header">JSONインポート (W3C Design Tokens)</div>
+      <div class="section-body">
+        <label for="import-name">コレクション名</label>
+        <input type="text" id="import-name" placeholder="My Tokens" />
+        <label for="import-json">Design Tokens JSON</label>
+        <textarea id="import-json" placeholder='{ "color": { "primary": { "$value": "#3B82F6", "$type": "color" } } }'></textarea>
+        <button class="btn btn-primary" id="import">インポートして適用</button>
+      </div>
+    </div>
+
+    <!-- Export -->
+    <div class="section">
+      <div class="section-header">JSONエクスポート</div>
+      <div class="section-body">
+        <button class="btn btn-secondary" id="export">現在の変数をエクスポート</button>
+        <textarea id="export-output" readonly rows="6" placeholder="エクスポート結果がここに表示されます"></textarea>
+        <div class="btn-row">
+          <button class="btn btn-ghost" id="copy" style="display:none">コピー</button>
+          <button class="btn btn-ghost" id="download" style="display:none">ダウンロード (.json)</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="status-bar" id="status-bar"></div>
+</body>
+</html>
