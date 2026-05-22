@@ -28,12 +28,6 @@ figma.ui.onmessage = async (msg) => {
     await exportVariables();
   } else if (msg.type === 'import-json') {
     await importJson(msg.json, msg.collectionName);
-  } else if (msg.type === 'load-api-key') {
-    const key = await figma.clientStorage.getAsync('anthropic-api-key');
-    figma.ui.postMessage({ type: 'api-key-loaded', key: key ?? '' });
-  } else if (msg.type === 'save-api-key') {
-    await figma.clientStorage.setAsync('anthropic-api-key', msg.key);
-    figma.ui.postMessage({ type: 'api-key-saved' });
   }
 };
 

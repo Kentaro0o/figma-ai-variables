@@ -1,265 +1,342 @@
 import './styles.css';
 
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+type GroupType = 'scale' | 'custom';
+
+interface ColorGroup {
+  id: string;
+  name: string;
+  type: GroupType;
+  colors: Record<string, string>; // key: shade name ("500" or "success"), value: "#hex"
+}
+
+interface AppState {
+  collectionName: string;
+  groups: ColorGroup[];
+}
+
 // ─── State ────────────────────────────────────────────────────────────────────
 
-let apiKey = '';
+const state: AppState = {
+  collectionName: 'My Tokens',
+  groups: [],
+};
 
-// ─── DOM references ──────────────────────────────────────────────────────────
+// ─── Color utilities ──────────────────────────────────────────────────────────
 
-const apiKeyInput = document.getElementById('api-key') as HTMLInputElement;
-const saveKeyBtn = document.getElementById('save-key') as HTMLButtonElement;
-const keyStatus = document.getElementById('key-status') as HTMLSpanElement;
+function hexToHsl(hex: string): [number, number, number] {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return [0, 0, l];
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h = 0;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+  else if (max === g) h = ((b - r) / d + 2) / 6;
+  else h = ((r - g) / d + 4) / 6;
+  return [h, s, l];
+}
 
-const themeInput = document.getElementById('theme') as HTMLInputElement;
-const generateBtn = document.getElementById('generate') as HTMLButtonElement;
-const generateStatus = document.getElementById('generate-status') as HTMLDivElement;
-const previewArea = document.getElementById('preview') as HTMLDivElement;
-const applyBtn = document.getElementById('apply') as HTMLButtonElement;
+function hslToHex(h: number, s: number, l: number): string {
+  s = Math.max(0, Math.min(1, s));
+  l = Math.max(0, Math.min(1, l));
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => {
+    const k = (n + h * 12) % 12;
+    return l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+  };
+  const toHex = (v: number) => Math.round(v * 255).toString(16).padStart(2, '0');
+  return `#${toHex(f(0))}${toHex(f(8))}${toHex(f(4))}`;
+}
 
-const importTextarea = document.getElementById('import-json') as HTMLTextAreaElement;
-const importNameInput = document.getElementById('import-name') as HTMLInputElement;
-const importBtn = document.getElementById('import') as HTMLButtonElement;
+function generateScale(hex: string): Record<string, string> {
+  const [h, s, l] = hexToHsl(hex);
+  return {
+    '50':  hslToHex(h, s * 0.12, 0.97),
+    '100': hslToHex(h, s * 0.22, 0.94),
+    '200': hslToHex(h, s * 0.38, 0.87),
+    '300': hslToHex(h, s * 0.58, 0.77),
+    '400': hslToHex(h, s * 0.80, 0.65),
+    '500': hex,
+    '600': hslToHex(h, Math.min(s * 1.05, 1), l * 0.86),
+    '700': hslToHex(h, Math.min(s * 1.10, 1), l * 0.72),
+    '800': hslToHex(h, Math.min(s * 1.12, 1), l * 0.56),
+    '900': hslToHex(h, Math.min(s * 1.15, 1), l * 0.42),
+  };
+}
 
-const exportBtn = document.getElementById('export') as HTMLButtonElement;
-const exportOutput = document.getElementById('export-output') as HTMLTextAreaElement;
-const copyBtn = document.getElementById('copy') as HTMLButtonElement;
-const downloadBtn = document.getElementById('download') as HTMLButtonElement;
+function isValidHex(v: string) { return /^#[0-9a-fA-F]{6}$/.test(v); }
 
-const statusBar = document.getElementById('status-bar') as HTMLDivElement;
+// ─── ID generator ────────────────────────────────────────────────────────────
 
-// ─── Generated palette (kept in memory for "Apply" button) ──────────────────
+let _idCounter = 0;
+const uid = () => `g${++_idCounter}`;
 
-let lastPalette: { collectionName: string; tokens: Record<string, unknown> } | null = null;
+// ─── State → Figma palette ────────────────────────────────────────────────────
 
-// ─── Initialize ───────────────────────────────────────────────────────────────
-
-parent.postMessage({ pluginMessage: { type: 'load-api-key' } }, '*');
-
-// ─── API Key ─────────────────────────────────────────────────────────────────
-
-saveKeyBtn.addEventListener('click', () => {
-  const key = apiKeyInput.value.trim();
-  if (!key.startsWith('sk-ant-')) {
-    showStatus('Invalid API key format', 'error');
-    return;
+function buildPalette() {
+  const tokens: Record<string, unknown> = {};
+  for (const group of state.groups) {
+    const g: Record<string, unknown> = {};
+    for (const [key, hex] of Object.entries(group.colors)) {
+      g[key] = { $value: hex, $type: 'color' };
+    }
+    tokens[group.name] = g;
   }
-  parent.postMessage({ pluginMessage: { type: 'save-api-key', key } }, '*');
-});
+  return { collectionName: state.collectionName, tokens };
+}
 
-// ─── Generate ─────────────────────────────────────────────────────────────────
+// ─── Render ───────────────────────────────────────────────────────────────────
 
-generateBtn.addEventListener('click', async () => {
-  const theme = themeInput.value.trim();
-  if (!theme) { showStatus('テーマを入力してください', 'error'); return; }
-  if (!apiKey) { showStatus('API Keyを保存してください', 'error'); return; }
+function render() {
+  const app = document.getElementById('app')!;
+  app.innerHTML = '';
 
-  generateBtn.disabled = true;
-  generateStatus.textContent = 'AIが生成中...';
-  previewArea.innerHTML = '';
-  applyBtn.disabled = true;
-  lastPalette = null;
+  // ── Collection name ──
+  const colSection = section('コレクション名');
+  const colInput = el('input', { type: 'text', value: state.collectionName, placeholder: 'My Tokens', class: 'input' });
+  colInput.addEventListener('input', () => { state.collectionName = (colInput as HTMLInputElement).value; });
+  colSection.appendChild(colInput);
+  app.appendChild(colSection);
 
-  try {
-    const palette = await generatePalette(theme, apiKey);
-    lastPalette = palette;
-    renderPreview(palette);
-    applyBtn.disabled = false;
-    generateStatus.textContent = '生成完了！';
-  } catch (e) {
-    generateStatus.textContent = '';
-    showStatus('生成エラー: ' + String(e), 'error');
-  } finally {
-    generateBtn.disabled = false;
+  // ── Color groups ──
+  const groupsSection = section('カラーグループ');
+
+  for (const group of state.groups) {
+    groupsSection.appendChild(renderGroup(group));
   }
-});
 
-// ─── Apply ────────────────────────────────────────────────────────────────────
+  // Add group buttons
+  const addRow = div('add-row');
+  const addScaleBtn = btn('+ スケール追加 (50〜900)', 'btn-secondary', () => {
+    state.groups.push({ id: uid(), name: 'primary', type: 'scale', colors: generateScale('#3B82F6') });
+    render();
+  });
+  const addCustomBtn = btn('+ カスタム追加', 'btn-secondary', () => {
+    state.groups.push({ id: uid(), name: 'semantic', type: 'custom', colors: { success: '#22C55E', warning: '#F59E0B', error: '#EF4444', info: '#3B82F6' } });
+    render();
+  });
+  addRow.append(addScaleBtn, addCustomBtn);
+  groupsSection.appendChild(addRow);
+  app.appendChild(groupsSection);
 
-applyBtn.addEventListener('click', () => {
-  if (!lastPalette) return;
-  parent.postMessage({ pluginMessage: { type: 'apply-variables', palette: lastPalette } }, '*');
-});
+  // ── Actions ──
+  const actSection = section('アクション');
+  const applyBtn = btn('Figmaに変数として適用', 'btn-primary', () => {
+    if (!state.groups.length) { showStatus('グループを追加してください', 'error'); return; }
+    parent.postMessage({ pluginMessage: { type: 'apply-variables', palette: buildPalette() } }, '*');
+  });
 
-// ─── Import ──────────────────────────────────────────────────────────────────
+  const exportBtn = btn('変数をJSONエクスポート', 'btn-secondary', () => {
+    parent.postMessage({ pluginMessage: { type: 'export-variables' } }, '*');
+  });
 
-importBtn.addEventListener('click', () => {
-  const json = importTextarea.value.trim();
-  if (!json) { showStatus('JSONを入力してください', 'error'); return; }
-  const name = importNameInput.value.trim() || 'Imported Tokens';
-  parent.postMessage({ pluginMessage: { type: 'import-json', json, collectionName: name } }, '*');
-});
+  actSection.append(applyBtn, exportBtn);
 
-// ─── Export ──────────────────────────────────────────────────────────────────
+  // ── Import ──
+  const importLabel = el('label', { class: 'label' });
+  importLabel.textContent = 'JSONインポート (W3C Design Tokens)';
+  const importNameInput = el('input', { type: 'text', placeholder: 'コレクション名', class: 'input', value: 'Imported Tokens' }) as HTMLInputElement;
+  const importArea = el('textarea', { placeholder: '{ "color": { "primary": { "$value": "#hex", "$type": "color" } } }', class: 'textarea' }) as HTMLTextAreaElement;
+  const importBtn2 = btn('インポートして適用', 'btn-secondary', () => {
+    const json = importArea.value.trim();
+    if (!json) { showStatus('JSONを入力してください', 'error'); return; }
+    parent.postMessage({ pluginMessage: { type: 'import-json', json, collectionName: importNameInput.value || 'Imported Tokens' } }, '*');
+  });
+  actSection.append(importLabel, importNameInput, importArea, importBtn2);
 
-exportBtn.addEventListener('click', () => {
-  parent.postMessage({ pluginMessage: { type: 'export-variables' } }, '*');
-  showStatus('エクスポート中...', 'info');
-});
+  // ── Export output ──
+  const exportOut = el('textarea', { id: 'export-output', class: 'textarea', readonly: 'true', rows: '6', placeholder: 'エクスポート結果がここに表示されます', style: 'display:none' }) as HTMLTextAreaElement;
+  const copyBtn2 = btn('コピー', 'btn-ghost', () => { navigator.clipboard.writeText(exportOut.value); showStatus('コピーしました', 'success'); });
+  const dlBtn = btn('ダウンロード (.json)', 'btn-ghost', () => {
+    const blob = new Blob([exportOut.value], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'design-tokens.json'; a.click();
+  });
+  copyBtn2.id = 'copy-btn'; dlBtn.id = 'dl-btn';
+  copyBtn2.style.display = 'none'; dlBtn.style.display = 'none';
+  actSection.append(exportOut, copyBtn2, dlBtn);
 
-copyBtn.addEventListener('click', () => {
-  navigator.clipboard.writeText(exportOutput.value);
-  showStatus('コピーしました', 'success');
-});
+  app.appendChild(actSection);
+}
 
-downloadBtn.addEventListener('click', () => {
-  const blob = new Blob([exportOutput.value], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'design-tokens.json';
-  a.click();
-  URL.revokeObjectURL(url);
-});
+// ─── Render group ────────────────────────────────────────────────────────────
 
-// ─── Messages from plugin code ───────────────────────────────────────────────
+function renderGroup(group: ColorGroup): HTMLElement {
+  const card = div('group-card');
+
+  // Header
+  const header = div('group-header');
+
+  const nameInput = el('input', { type: 'text', value: group.name, class: 'input input-name', placeholder: 'グループ名' }) as HTMLInputElement;
+  nameInput.addEventListener('change', () => { group.name = nameInput.value; });
+
+  const removeBtn = btn('✕', 'btn-icon', () => {
+    state.groups = state.groups.filter(g => g.id !== group.id);
+    render();
+  });
+
+  header.append(nameInput, removeBtn);
+  card.appendChild(header);
+
+  // Scale helper (only for scale type)
+  if (group.type === 'scale') {
+    const helperRow = div('helper-row');
+    const baseColor = Object.values(group.colors)[5] ?? '#3B82F6'; // 500
+
+    const picker = el('input', { type: 'color', value: baseColor, class: 'color-picker-input' }) as HTMLInputElement;
+    const autoBtn = btn('スケール自動生成', 'btn-secondary btn-sm', () => {
+      group.colors = generateScale(picker.value);
+      render();
+    });
+    const helperLabel = el('span', { class: 'helper-label' });
+    helperLabel.textContent = 'ベースカラー (500):';
+
+    picker.addEventListener('input', () => {
+      group.colors['500'] = picker.value;
+    });
+
+    helperRow.append(helperLabel, picker, autoBtn);
+    card.appendChild(helperRow);
+  }
+
+  // Color rows
+  const swatchGrid = div('swatch-grid');
+
+  for (const [key, hex] of Object.entries(group.colors)) {
+    swatchGrid.appendChild(renderSwatch(group, key, hex));
+  }
+
+  // Add token button (for custom groups)
+  if (group.type === 'custom') {
+    const addTokenBtn = btn('+ トークン追加', 'btn-ghost btn-sm', () => {
+      const name = prompt('トークン名を入力 (例: hover, focus)');
+      if (name && !group.colors[name]) {
+        group.colors[name] = '#000000';
+        render();
+      }
+    });
+    swatchGrid.appendChild(addTokenBtn);
+  }
+
+  card.appendChild(swatchGrid);
+  return card;
+}
+
+// ─── Render swatch ────────────────────────────────────────────────────────────
+
+function renderSwatch(group: ColorGroup, key: string, hex: string): HTMLElement {
+  const row = div('swatch-row');
+
+  const preview = div('swatch-preview');
+  preview.style.background = isValidHex(hex) ? hex : '#ccc';
+
+  const keyLabel = el('span', { class: 'swatch-key' });
+  keyLabel.textContent = key;
+
+  const picker = el('input', { type: 'color', value: isValidHex(hex) ? hex : '#000000', class: 'color-picker-input' }) as HTMLInputElement;
+  picker.addEventListener('input', () => {
+    group.colors[key] = picker.value;
+    preview.style.background = picker.value;
+    hexInput.value = picker.value;
+  });
+
+  const hexInput = el('input', { type: 'text', value: hex, class: 'input input-hex', placeholder: '#000000', maxlength: '7' }) as HTMLInputElement;
+  hexInput.addEventListener('change', () => {
+    const v = hexInput.value.startsWith('#') ? hexInput.value : '#' + hexInput.value;
+    if (isValidHex(v)) {
+      group.colors[key] = v;
+      picker.value = v;
+      preview.style.background = v;
+    }
+  });
+
+  const removeBtn = btn('✕', 'btn-icon btn-icon-sm', () => {
+    delete group.colors[key];
+    row.remove();
+  });
+
+  row.append(preview, keyLabel, picker, hexInput, removeBtn);
+  return row;
+}
+
+// ─── Messages from plugin ─────────────────────────────────────────────────────
 
 window.onmessage = (event) => {
   const msg = event.data.pluginMessage;
   if (!msg) return;
 
   switch (msg.type) {
-    case 'api-key-loaded':
-      if (msg.key) {
-        apiKey = msg.key;
-        apiKeyInput.value = msg.key;
-        keyStatus.textContent = '保存済み';
-        keyStatus.className = 'status-ok';
-      }
-      break;
-    case 'api-key-saved':
-      apiKey = apiKeyInput.value.trim();
-      keyStatus.textContent = '保存済み';
-      keyStatus.className = 'status-ok';
-      showStatus('API Keyを保存しました', 'success');
-      break;
     case 'apply-success':
       showStatus(`${msg.count}個の変数を適用しました`, 'success');
       break;
-    case 'export-result':
-      exportOutput.value = msg.json;
-      exportOutput.style.display = 'block';
-      copyBtn.style.display = 'inline-block';
-      downloadBtn.style.display = 'inline-block';
+    case 'export-result': {
+      const out = document.getElementById('export-output') as HTMLTextAreaElement | null;
+      const copyBtn2 = document.getElementById('copy-btn') as HTMLElement | null;
+      const dlBtn = document.getElementById('dl-btn') as HTMLElement | null;
+      if (out) { out.value = msg.json; out.style.display = 'block'; }
+      if (copyBtn2) copyBtn2.style.display = 'inline-block';
+      if (dlBtn) dlBtn.style.display = 'inline-block';
       showStatus('エクスポート完了', 'success');
       break;
+    }
     case 'error':
       showStatus('エラー: ' + msg.message, 'error');
       break;
   }
 };
 
-// ─── Claude API call ─────────────────────────────────────────────────────────
+// ─── DOM helpers ──────────────────────────────────────────────────────────────
 
-async function generatePalette(theme: string, key: string) {
-  const prompt = `You are a design token expert. Generate a complete color palette for the theme: "${theme}".
-
-Return ONLY valid JSON in the W3C Design Tokens format. No markdown, no explanation, just JSON.
-
-The structure must be:
-{
-  "collectionName": "<theme name>",
-  "tokens": {
-    "color": {
-      "primary": {
-        "50":  { "$value": "#hex", "$type": "color" },
-        "100": { "$value": "#hex", "$type": "color" },
-        "200": { "$value": "#hex", "$type": "color" },
-        "300": { "$value": "#hex", "$type": "color" },
-        "400": { "$value": "#hex", "$type": "color" },
-        "500": { "$value": "#hex", "$type": "color" },
-        "600": { "$value": "#hex", "$type": "color" },
-        "700": { "$value": "#hex", "$type": "color" },
-        "800": { "$value": "#hex", "$type": "color" },
-        "900": { "$value": "#hex", "$type": "color" }
-      },
-      "secondary": { ... same scale ... },
-      "neutral": { ... same scale ... },
-      "semantic": {
-        "success": { "$value": "#hex", "$type": "color" },
-        "warning": { "$value": "#hex", "$type": "color" },
-        "error":   { "$value": "#hex", "$type": "color" },
-        "info":    { "$value": "#hex", "$type": "color" }
-      },
-      "background": {
-        "default": { "$value": "#hex", "$type": "color" },
-        "surface": { "$value": "#hex", "$type": "color" },
-        "overlay": { "$value": "#hex", "$type": "color" }
-      },
-      "text": {
-        "primary":   { "$value": "#hex", "$type": "color" },
-        "secondary": { "$value": "#hex", "$type": "color" },
-        "disabled":  { "$value": "#hex", "$type": "color" },
-        "inverse":   { "$value": "#hex", "$type": "color" }
-      }
-    }
+function el(tag: string, attrs: Record<string, string> = {}): HTMLElement {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') e.className = v;
+    else e.setAttribute(k, v);
   }
-}`;
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': key,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 2048,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  });
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error((err as { error?: { message?: string } }).error?.message ?? `HTTP ${response.status}`);
-  }
-
-  const data = await response.json() as { content: Array<{ text: string }> };
-  const text = data.content[0].text.trim();
-
-  // Strip markdown code fences if present
-  const jsonText = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
-  return JSON.parse(jsonText);
+  return e;
 }
 
-// ─── Preview renderer ────────────────────────────────────────────────────────
-
-function renderPreview(palette: { collectionName: string; tokens: Record<string, unknown> }) {
-  previewArea.innerHTML = `<h4>${palette.collectionName}</h4>`;
-  renderTokenGroup(palette.tokens as Record<string, unknown>, previewArea, '');
+function div(cls: string): HTMLDivElement {
+  const d = document.createElement('div');
+  d.className = cls;
+  return d;
 }
 
-function renderTokenGroup(group: Record<string, unknown>, container: HTMLElement, prefix: string) {
-  for (const [key, val] of Object.entries(group)) {
-    const label = prefix ? `${prefix}/${key}` : key;
-    if (isDesignToken(val)) {
-      const swatch = document.createElement('div');
-      swatch.className = 'swatch';
-      swatch.innerHTML = `
-        <span class="swatch-color" style="background:${val.$value}"></span>
-        <span class="swatch-name">${label}</span>
-        <span class="swatch-value">${val.$value}</span>
-      `;
-      container.appendChild(swatch);
-    } else if (typeof val === 'object' && val !== null) {
-      const section = document.createElement('div');
-      section.className = 'group-label';
-      section.textContent = label;
-      container.appendChild(section);
-      renderTokenGroup(val as Record<string, unknown>, container, label);
-    }
-  }
+function btn(label: string, cls: string, onClick: () => void): HTMLButtonElement {
+  const b = document.createElement('button');
+  b.className = `btn ${cls}`;
+  b.textContent = label;
+  b.addEventListener('click', onClick);
+  return b;
 }
 
-function isDesignToken(val: unknown): val is { $value: string; $type: string } {
-  return typeof val === 'object' && val !== null && '$value' in val;
+function section(title: string): HTMLDivElement {
+  const s = div('section');
+  const h = div('section-header');
+  h.textContent = title;
+  s.appendChild(h);
+  const body = div('section-body');
+  s.appendChild(body);
+  // append children to body from now on by overriding appendChild
+  const origAppend = s.appendChild.bind(s);
+  s.appendChild = <T extends Node>(child: T): T => body.appendChild(child) as T;
+  origAppend(body); // already added
+  return s;
 }
 
 // ─── Status bar ───────────────────────────────────────────────────────────────
 
 function showStatus(msg: string, type: 'success' | 'error' | 'info') {
-  statusBar.textContent = msg;
-  statusBar.className = `status-bar ${type}`;
-  setTimeout(() => { statusBar.textContent = ''; statusBar.className = 'status-bar'; }, 4000);
+  const bar = document.getElementById('status-bar')!;
+  bar.textContent = msg;
+  bar.className = `status-bar ${type}`;
+  setTimeout(() => { bar.textContent = ''; bar.className = 'status-bar'; }, 4000);
 }
+
+// ─── Boot ─────────────────────────────────────────────────────────────────────
+
+render();
