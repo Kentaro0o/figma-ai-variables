@@ -1,4 +1,5 @@
 const HtmlWebpackPlugin = require('html-webpack-plugin');
+const HtmlInlineScriptPlugin = require('html-inline-script-webpack-plugin');
 const path = require('path');
 
 module.exports = [
@@ -36,6 +37,7 @@ module.exports = [
         filename: 'ui.html',
         inject: 'body',
       }),
+      new HtmlInlineScriptPlugin(), // JS を HTML にインライン化（Figma 必須）
     ],
   },
 ];
